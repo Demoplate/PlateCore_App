@@ -1,0 +1,16 @@
+   # Ignore data files
+logs.json
+profiles.json
+projects.json
+session_history.json
+session.txt
+data.json
+data2.json
+coredata.json
+log.txt
+color.txt
+Mail
+Fileiyaad.py
+# Ignore Python cache files
+__pycache__/
+*.pyc
