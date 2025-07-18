@@ -5,6 +5,7 @@ import time
 import json
 from datetime import datetime
 import pytz # For time zone handling
+import re # Added for previous potential name cleaning (if you added that)
 
 # ANSI color codes
 COLORS = {
@@ -23,10 +24,16 @@ PROFILES_FILE = "profiles.json"
 LOGS_FILE = "logs.json"
 SESSION_HISTORY_FILE = "session_history.json"
 PROJECTS_FILE = "projects.json"
+AUTH_FILE = "auth.json" # NEW: File to store PlateCore ID and Password
 
 # --- Global session variables (to store login info) ---
 current_platecore_id = None # Will store the logged-in ID
 current_session_start_time = None # To track session duration
+
+# --- Global system credentials (loaded from AUTH_FILE) ---
+# These will be initialized with defaults and then updated from auth.json
+_SYSTEM_PLATECORE_ID = "demoplate"
+_SYSTEM_PASSWORD = "245225"
 
 # --- ASCII Art for "platecore" ---
 # Generated using a tool for 'platecore'
@@ -138,6 +145,38 @@ def save_json_file(filepath, data):
     except Exception as e:
         print_error(f"An unexpected error occurred while saving {filepath}: {type(e).__name__}: {e}")
         raise # Re-raise to let the main loop's error handler catch it
+
+# --- NEW: Auth File Handling Functions ---
+def load_auth_credentials():
+    global _SYSTEM_PLATECORE_ID, _SYSTEM_PASSWORD
+    if os.path.exists(AUTH_FILE):
+        try:
+            with open(AUTH_FILE, "r") as f:
+                auth_data = json.load(f)
+                _SYSTEM_PLATECORE_ID = auth_data.get("platecore_id", _SYSTEM_PLATECORE_ID)
+                _SYSTEM_PASSWORD = auth_data.get("password", _SYSTEM_PASSWORD)
+        except json.JSONDecodeError:
+            print_error(f"Error reading {AUTH_FILE}. File might be corrupted. Using default credentials.")
+            # Optionally, reset the file or prompt user, but for now just use defaults
+        except Exception as e:
+            print_error(f"An unexpected error occurred while loading {AUTH_FILE}: {type(e).__name__}: {e}")
+    else:
+        # If AUTH_FILE doesn't exist, create it with the initial default credentials
+        save_auth_credentials(_SYSTEM_PLATECORE_ID, _SYSTEM_PASSWORD)
+
+
+def save_auth_credentials(platecore_id, password):
+    auth_data = {
+        "platecore_id": platecore_id,
+        "password": password
+    }
+    try:
+        with open(AUTH_FILE, "w") as f:
+            json.dump(auth_data, f, indent=4)
+    except IOError as e:
+        print_error(f"Error: Could not write to {AUTH_FILE}. Check permissions or disk space. {type(e).__name__}: {e}")
+    except Exception as e:
+        print_error(f"An unexpected error occurred while saving {AUTH_FILE}: {type(e).__name__}: {e}")
 
 # --- Data Loading (Specific for Logs, Profiles, Projects) ---
 def load_profiles():
@@ -576,6 +615,45 @@ def import_all_data(profiles, logs, projects, session_history):
     except Exception as e:
         print_error(f"An unexpected error occurred during import: {type(e).__name__}: {e}")
 
+# --- NEW: Change Authentication Command ---
+def change_authentication_command():
+    global _SYSTEM_PLATECORE_ID, _SYSTEM_PASSWORD, current_platecore_id
+
+    if not current_platecore_id:
+        print_error("You must be logged in to change credentials.")
+        return
+
+    pause_print(f"{COLORS['yellow']}--- Change PlateCore Credentials ---{RESET}")
+    
+    # Verify current credentials
+    current_id_input = prompt_input("Enter your CURRENT PlateCore ID: ").strip()
+    current_password_input = prompt_getpass("Enter your CURRENT password: ")
+
+    if current_id_input == _SYSTEM_PLATECORE_ID and current_password_input == _SYSTEM_PASSWORD:
+        pause_print(f"{COLORS['green']}Current credentials verified.{RESET}")
+        
+        # Prompt for new credentials
+        new_id = prompt_input("Enter your NEW PlateCore ID: ").strip()
+        new_password = prompt_getpass("Enter your NEW password: ")
+
+        if not new_id or not new_password:
+            print_error("New ID and password cannot be empty. Change cancelled.")
+            return
+
+        # Update global variables and save to file
+        _SYSTEM_PLATECORE_ID = new_id
+        _SYSTEM_PASSWORD = new_password
+        save_auth_credentials(new_id, new_password)
+
+        pause_print(f"{COLORS['yellow']}PlateCore ID and password updated successfully!{RESET}")
+        pause_print(f"{COLORS['yellow']}You will need to use '{new_id}' to log in next time.{RESET}")
+        
+        # If the current session ID matches the old system ID, update it
+        # This keeps the user logged in with the new ID after changing it
+        if current_platecore_id == current_id_input:
+             mark_logged_in(new_id) # Update the session file with the new ID
+    else:
+        print_error(f"Incorrect CURRENT PlateCore ID or password. Change failed.")
 
 # --- Help Function (Categorized) ---
 def show_help(category=None):
@@ -620,6 +698,7 @@ def show_help(category=None):
             "commands": [
                 ("login", "Log in to PlateCore"),
                 ("logout", "Log out from PlateCore"),
+                ("changeauth", "Change PlateCore login ID and password"), # NEW COMMAND ADDED HERE
                 ("clear", "Clear the terminal screen"),
                 ("whoami", "Display current user and session info"),
                 ("history", "View session login/logout history"),
@@ -679,7 +758,7 @@ def who_am_i_command():
 # --- Main Application Logic ---
 
 def main():
-    global current_platecore_id, current_session_start_time
+    global current_platecore_id, current_session_start_time, _SYSTEM_PLATECORE_ID, _SYSTEM_PASSWORD
 
     # Clear screen and display ASCII art at startup
     clear_screen()
@@ -689,6 +768,9 @@ def main():
 
     malaysia_tz = pytz.timezone('Asia/Kuala_Lumpur')
     current_session_start_time = datetime.now(malaysia_tz)
+
+    # NEW: Load authentication credentials at startup
+    load_auth_credentials()
 
     # Attempt to load an existing session from file
     current_platecore_id = get_logged_in_user()
@@ -771,7 +853,8 @@ def main():
                     pause_print(f"{COLORS['yellow']}Password:{RESET}")
                     password_input = prompt_getpass()
 
-                    if platecore_id_input == "demoplate" and password_input == "245225":
+                    # AUTHENTICATE against the loaded _SYSTEM_PLATECORE_ID and _SYSTEM_PASSWORD
+                    if platecore_id_input == _SYSTEM_PLATECORE_ID and password_input == _SYSTEM_PASSWORD:
                         pause_print(f"{COLORS['yellow']}Access Granted{RESET}")
                         mark_logged_in(platecore_id_input)
                         current_session_start_time = datetime.now(malaysia_tz) # Reset session start time for new login
@@ -1152,6 +1235,10 @@ def main():
                 time.sleep(0.5) # Small pause
                 pause_print(f"{COLORS['yellow']}Type 'login' to log in or 'help' for available commands.{RESET}")
             
+            # NEW COMMAND: changeauth
+            elif base_command == "changeauth":
+                change_authentication_command()
+
             elif base_command == "whoami":
                 who_am_i_command()
 
@@ -1193,5 +1280,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
